@@ -1,0 +1,80 @@
+services:
+  migrate:
+    build: .
+    command: python -m kerberos.seed
+    environment:
+      KERBEROS_AS_TGS_KEY: 69c734f72a65d2828e2b721c25f1d5170f1fb0983b59aaa4459534182dc977fe
+      KERBEROS_DB_PATH: /data/kerberos.db
+      KERBEROS_SEED_USERS: alice:senha123,bob:outrasenha
+      KERBEROS_SEED_SERVICES: chat:e45f8057321d8a32211ebcf090b07c65e2e5aad04b7f76ec6af6c866a1006313
+    volumes:
+      - kerberos_data:/data
+
+  as_server:
+    build: .
+    command: python -m kerberos.as_server
+    environment:
+      KERBEROS_AS_TGS_KEY: 69c734f72a65d2828e2b721c25f1d5170f1fb0983b59aaa4459534182dc977fe
+      KERBEROS_DB_PATH: /data/kerberos.db
+      AS_HOST: 0.0.0.0
+      AS_PORT: "5000"
+    volumes:
+      - kerberos_data:/data
+    ports:
+      - "5000:5000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  tgs_server:
+    build: .
+    command: python -m kerberos.tgs_server
+    environment:
+      KERBEROS_AS_TGS_KEY: 69c734f72a65d2828e2b721c25f1d5170f1fb0983b59aaa4459534182dc977fe
+      KERBEROS_DB_PATH: /data/kerberos.db
+      TGS_HOST: 0.0.0.0
+      TGS_PORT: "5001"
+    volumes:
+      - kerberos_data:/data
+    ports:
+      - "5001:5001"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  chat_backend:
+    build: ./chat/backend
+    environment:
+      KERBEROS_CHAT_SERVICE_KEY: e45f8057321d8a32211ebcf090b07c65e2e5aad04b7f76ec6af6c866a1006313
+      CHAT_DB_PATH: /data/chat.db
+      CHAT_PORT: "5002"
+      AS_CONNECT_HOST: as_server
+      AS_PORT: "5000"
+      TGS_CONNECT_HOST: tgs_server
+      TGS_PORT: "5001"
+    volumes:
+      - chat_data:/data
+    ports:
+      - "5002:5002"
+    depends_on:
+      - as_server
+      - tgs_server
+
+  # TUI client. Kept out of the "up" flow via the "cli" profile below since it
+  # needs a real terminal and would otherwise get multiplexed away alongside
+  # the other services' logs. Run it on its own with:
+  #   docker compose run --rm chat_frontend
+  chat_frontend:
+    build: ./chat/frontend
+    environment:
+      CHAT_API_URL: http://chat_backend:5002
+    stdin_open: true
+    tty: true
+    depends_on:
+      - chat_backend
+    profiles:
+      - cli
+
+volumes:
+  kerberos_data:
+  chat_data:
